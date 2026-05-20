@@ -1149,6 +1149,8 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
+  flex: 1;
+  min-height: 0;
 }
 .split-layout {
   display: grid;
@@ -1157,12 +1159,14 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  height: 100%;
 }
 .split-list {
   overflow-y: auto;
   border-right: 1.5px solid var(--border);
   background: var(--surface);
   min-height: 0;
+  height: 100%;
 }
 .split-panel {
   overflow-y: auto;
@@ -1170,6 +1174,7 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   padding: 14px;
   border-left: 1px solid var(--border);
   min-height: 0;
+  height: 100%;
 }
 .split-panel.empty {
   display: flex;
@@ -2462,14 +2467,13 @@ let DB = {
   sales    : [],
   labor    : [],
   rental   : [],
-  expense  : [],   // 별도 진행비만 (labor.expenses는 별도)
-  fixed    : [],
-  lease    : [],
-  assets   : [],
-  clients  : [],
-  persons  : [],
-  shops    : []
-,
+  expense      : [],   // 별도 진행비만 (labor.expenses는 별도)
+  fixed        : [],
+  lease        : [],
+  assets       : [],
+  clients      : [],
+  persons      : [],
+  shops        : [],
   personal_exp : [],
 };
 
@@ -2630,13 +2634,13 @@ const getProjName  = id  => { const p = getProjById(id); return p ? p.name : id 
 const getProjClient= id  => { const p = getProjById(id); return p ? (p.client||'') : ''; };
 
 /* ── Cost helpers (project_id 기준) ── */
-const getLaborCost  = pid => DB.labor.filter(l => l.project_id === pid).reduce((a,l) => a+(parseFloat(l.base_amount)||0), 0);
+const getLaborCost  = pid => DB.labor.filter(l => l.project_id === pid).reduce((a,l) => a+(parseFloat(l.base_amount)||0)+(parseFloat(l.extra_amount)||0), 0);
 const getRentalCost = pid => DB.rental.filter(r => r.project_id === pid).reduce((a,r) => a+(parseFloat(r.total)||0), 0);
 const getSepExpCost = pid => DB.expense.filter(e => e.project_id === pid).reduce((a,e) => a+(parseFloat(e.amount)||0), 0);
 /* 인건비 내부 실비 합산 */
 const getLaborExpCost = pid => DB.labor.filter(l => l.project_id === pid)
   .reduce((a,l) => a + ((l.expenses||[]).reduce((b,e) => b+(parseFloat(e.amount)||0), 0)), 0);
-const getTotalCost = pid => getLaborCost(pid) + getRentalCost(pid) + getSepExpCost(pid);
+const getTotalCost = pid => getLaborCost(pid) + getLaborExpCost(pid) + getRentalCost(pid) + getSepExpCost(pid);
 const getProfit    = (pid, supply) => (parseFloat(supply)||0) - getTotalCost(pid);
 
 /* ── Sales by project_id ── */
@@ -2648,8 +2652,9 @@ const getSalesByProj = pid => DB.sales.filter(s => s.project_id === pid);
 ═══════════════════════════════════════ */
 function migrate() {
   if (!DB.personal_exp) DB.personal_exp = [];
-  /* projects 컬렉션이 비어있고 sales에 데이터가 있으면 마이그레이션 */
-  if (DB.projects.length > 0) return;
+  /* project_id 없는 항목 보완 마이그레이션 */
+  const needMigration = [...DB.sales, ...DB.labor, ...DB.rental, ...DB.expense].some(i => i.project && !i.project_id);
+  if (DB.projects.length > 0 && !needMigration) return;
   const allItems = [...DB.sales, ...DB.labor, ...DB.rental, ...DB.expense];
   const projectNames = [...new Set(allItems.map(i => i.project).filter(Boolean))];
   if (projectNames.length === 0) return;
@@ -2715,10 +2720,13 @@ function save() {
 function updateDots() {
   const us = DB.sales.filter(s => !s.paid).length;
   const ul = DB.labor.filter(l => !l.paid).length;
+  const up = us; // 입금 대기 = 미입금 매출
   const ds = document.getElementById('dot-sales');
   const dl = document.getElementById('dot-labor');
+  const dp = document.getElementById('dot-payment');
   if (ds) { ds.textContent=us; ds.classList.toggle('hidden',!us); }
   if (dl) { dl.textContent=ul; dl.classList.toggle('hidden',!ul); }
+  if (dp) { dp.textContent=up; dp.classList.toggle('hidden',!up); }
 }
 
 /* ═══════════════════════════════════════
@@ -2761,6 +2769,12 @@ function init() {
   setupPWA();
   setTimeout(restoreViewMode, 50);
   setTimeout(initAllCurrencyInputs, 100);
+  /* 초기 active 페이지에 맞게 content overflow 설정 */
+  const contentEl = document.querySelector('.content');
+  if (contentEl) {
+    contentEl.style.padding = '16px 20px';
+    contentEl.style.overflowY = 'auto';
+  }
 }
 
 /* ═══════════════════════════════════════
@@ -2852,8 +2866,7 @@ const TB_TITLES = {
 const TB_ADD = {
   dashboard:'+ 새 프로젝트', sales:'+ 매출 추가', labor:'+ 인건비 추가',
   rental:'+ 렌탈비 추가', expense:'+ 진행비 추가',
-  payment:'',withtax:'',
-  withtax:'', fixed:'+ 추가', db:'+ 추가'
+  payment:'', withtax:'', fixed:'+ 추가', db:'+ 추가'
 };
 
 function navTo(el) {
@@ -2882,7 +2895,7 @@ function navTo(el) {
   };
   map[pg]?.();
   /* Split-layout pages need no padding on .content */
-  const splitPages = ['sales','labor','rental','expense'];
+  const splitPages = ['sales','labor','rental','expense','payment'];
   const contentEl = document.querySelector('.content');
   if (contentEl) {
     contentEl.style.padding   = splitPages.includes(pg) ? '0' : '16px 20px';
@@ -3576,7 +3589,7 @@ function renderPayment() {
 
     return `<div class="list-item" onclick="selectPayment(${idx})">
       <div class="list-line-1">
-        <span class="list-title">${s.project_name||getProjName(s.project_id)}</span>
+        <span class="list-title">${s.project||getProjName(s.project_id)}</span>
         <div class="list-badges">
           ${ddayBadge}
           <span class="badge ${s.paid?'b-green':'b-red'}">${s.paid?'입금완료':'미입금'}</span>
@@ -3810,7 +3823,10 @@ function renderDashboard() {
   const allS   = DB.sales;
   const mSales = allS.filter(s => YM(s.inv_date||s.date) === todayM);
   const mSup   = mSales.reduce((a,s) => a+(parseFloat(s.supply)||0), 0);
-  const mProfit= mSales.reduce((a,s) => a+(parseFloat(s.supply)||0)-getTotalCost(s.project_id), 0);
+  /* 손익: 매출합 - 비용합(project_id 중복 제거) */
+  const mProjIds = [...new Set(mSales.map(s=>s.project_id).filter(Boolean))];
+  const mCost  = mProjIds.reduce((a,pid) => a+getTotalCost(pid), 0);
+  const mProfit= mSup - mCost;
   const unpaidS= allS.filter(s => !s.paid);
   const unpaidAmt = unpaidS.reduce((a,s) => a+(parseFloat(s.total)||0), 0);
   const unpaidL= DB.labor.filter(l => !l.paid);
@@ -3980,7 +3996,7 @@ function renderProjectDetail() {
   const rc      = getRentalCost(selectedProjId);
   const ec      = getSepExpCost(selectedProjId);
   const lec     = getLaborExpCost(selectedProjId);
-  const cost    = lc + rc + ec;
+  const cost    = lc + lec + rc + ec;
   const profit  = sup - cost;
   const margin  = sup ? ((profit/sup)*100).toFixed(0) : 0;
   const vat     = Math.round(sup * 0.1);
@@ -4424,7 +4440,6 @@ function openSalesModal(idx=-1, prefillPid='') {
     document.getElementById('sm-proj-hint').textContent = p ? `연결됨: ${p.project_id}` : '';
     document.getElementById('sm-proj-hint').style.color = 'var(--green2)';
     document.getElementById('sm-tax-type').value      = s.tax_type || 'normal';
-    smCalc();
     document.getElementById('sm-work-type').value     = s.work_type || 'shoot';
     document.getElementById('sm-work-date').value     = s.work_date || s.date || '';
     document.getElementById('sm-work-date-end').value = s.work_date_end || '';
@@ -4481,7 +4496,7 @@ function openSalesModal(idx=-1, prefillPid='') {
   openModal('modal-sales');
   setTimeout(()=>{
     document.querySelectorAll('#modal-sales .fi-currency:not([readonly])').forEach(el=>{el._currencyInit=false;initCurrencyInput(el);});
-    if(idx>=0){const s=DB.sales[idx];setCurrencyVal('sm-supply',s.supply);}
+    if(idx>=0){const s=DB.sales[idx];setCurrencyVal('sm-supply',s.supply);setTimeout(smCalc,10);}
   },30);
 }
 function smFillProject() {
@@ -4660,8 +4675,8 @@ function smCalc() {
   }
   const pid = document.getElementById('sm-project-sel').value;
   if (sup > 0 && pid && pid !== '') {
-    const lc=getLaborCost(pid), rc=getRentalCost(pid), ec=getSepExpCost(pid);
-    const profit = sup-lc-rc-ec;
+    const lc=getLaborCost(pid), lec=getLaborExpCost(pid), rc=getRentalCost(pid), ec=getSepExpCost(pid);
+    const profit = sup-lc-lec-rc-ec;
     document.getElementById('sm-profit-box').style.display='block';
     document.getElementById('pp-sup').textContent    = W(sup);
     document.getElementById('pp-labor').textContent  = '−'+W(lc);
@@ -4679,6 +4694,9 @@ function saveSales() {
   let   pid      = document.getElementById('sm-project-sel')?.value;
   const sup      = getCurrencyVal('sm-supply') || parseFloat(document.getElementById('sm-supply')?.value)||0;
   const invDate  = document.getElementById('sm-inv-date')?.value;
+  const workDate    = document.getElementById('sm-work-date')?.value || invDate;
+  const workDateEnd = document.getElementById('sm-work-date-end')?.value || '';
+  const workType    = document.getElementById('sm-work-type')?.value || 'shoot';
 
   if (!projName) { toast('프로젝트명을 입력해주세요.','err'); return; }
   if (!sup)      { toast('공급가를 입력해주세요.','err'); return; }
@@ -4718,9 +4736,6 @@ function saveSales() {
   const vat      = taxType === 'withholding' ? 0 : Math.round(sup * 0.1);
   const whtTax   = taxType === 'withholding' ? Math.round(sup * 0.033) : 0;
   const netAmount = taxType === 'withholding' ? sup - whtTax : sup + vat;
-  const workDate    = document.getElementById('sm-work-date')?.value || invDate;
-  const workDateEnd = document.getElementById('sm-work-date-end')?.value || '';
-  const workType    = document.getElementById('sm-work-type')?.value || 'shoot';
   const obj = {
     id           : uid(),
     project_id   : pid,
@@ -5434,7 +5449,7 @@ function saveLabor() {
     expenses:exps,
     id_no:document.getElementById('lm-idno')?.value,
     biz_name:document.getElementById('lm-biz')?.value,
-    biz_no:document.getElementById('lm-idno')?.value,
+    biz_no:document.getElementById('lm-biz-no')?.value||document.getElementById('lm-idno')?.value,
     email:document.getElementById('lm-email')?.value,
     bank:document.getElementById('lm-bank')?.value,
     account:document.getElementById('lm-account')?.value,
@@ -5692,7 +5707,10 @@ function rmCalc() {
   /* hidden 필드 */
   const amtEl = document.getElementById('rm-amt');
   if (amtEl) amtEl.value = discounted;
-  setReadonlyCurrencyVal('rm-total', discounted);
+  /* 추가비용 합산 */
+  const extraEl = document.getElementById('rm-extra');
+  const extraAmt = getCurrencyVal('rm-extra') || parseFloat(extraEl?.value) || 0;
+  setReadonlyCurrencyVal('rm-total', discounted + extraAmt);
 }
 function saveRental() {
   const pid=document.getElementById('rm-proj')?.value;
@@ -5701,7 +5719,7 @@ function saveRental() {
   if(!pid||!shop||!date){toast('프로젝트, 렌탈샵, 날짜는 필수입니다.','err');return;}
   rmCalc(); /* 저장 전 최신 계산 */
   const amt=parseFloat(document.getElementById('rm-amt')?.value)||0;
-  const extra=0;
+  const extra=getCurrencyVal('rm-extra')||parseFloat(document.getElementById('rm-extra')?.value)||0;
   const discount=parseInt(document.getElementById('rm-discount')?.value)||0;
   const original=amt>0&&discount>0 ? Math.round(amt/(1-discount/100)) : amt;
   const items = rmGetItems();
@@ -5874,10 +5892,10 @@ function renderExpense() {
     <div class="kpi-card c-orange"><div class="kpi-label">정산 대기</div><div class="kpi-val num">${all.filter(e=>e.settle!=='done').length}건</div></div>
     <div class="kpi-card" style="--kc:var(--green)"><div class="kpi-label">정산완료</div><div class="kpi-val num">${all.filter(e=>e.settle==='done').length}건</div></div>
     <div class="kpi-card c-blue"><div class="kpi-label">인건비 내 실비 합계</div><div class="kpi-val num">₩${WS(DB.labor.reduce((a,l)=>a+((l.expenses||[]).reduce((b,e)=>b+(parseFloat(e.amount)||0),0)),0))}</div></div>`;
-  document.getElementById('ef-tot').textContent=W(data.reduce((a,e)=>a+(parseFloat(e.amount)||0),0));
+  const efTotEl=document.getElementById('ef-tot'); if(efTotEl) efTotEl.textContent=W(data.reduce((a,e)=>a+(parseFloat(e.amount)||0),0));
   const SLBL={included:'인건비포함',separate:'별도송금',done:'완료'};
   const SCLS={included:'b-orange',separate:'b-red',done:'b-green'};
-  document.getElementById('e-tbody').innerHTML=data.map(e=>{
+  const eTbody=document.getElementById('e-tbody'); if(eTbody) eTbody.innerHTML=data.map(e=>{
     const idx=DB.expense.indexOf(e);
     return`<tr>
       <td class="num" style="white-space:nowrap">${YMD(e.date)}</td>
@@ -6453,8 +6471,40 @@ function exportExcel() {
     '연락처'      : s.phone || '',
   }))), '렌탈샵DB');
 
+  /* ── 프로젝트 시트 ── */
+  XLSX.utils.book_append_sheet(wb, makeSheet(DB.projects.map(p => ({
+    '프로젝트ID'  : p.project_id,
+    '프로젝트명'  : p.name,
+    '클라이언트'  : p.client,
+    '상태'        : p.status,
+    '촬영일'      : p.date,
+    '마감일'      : p.due_date,
+    '결제조건'    : PAY_LABEL[p.pay_cond] || p.pay_cond || '',
+    '메모'        : p.note,
+  }))), '프로젝트');
+
+  /* ── 개인실비 시트 ── */
+  XLSX.utils.book_append_sheet(wb, makeSheet((DB.personal_exp||[]).map(e => ({
+    '날짜'        : e.date,
+    '항목'        : e.category,
+    '금액'        : parseFloat(e.amount)||0,
+    '사용자'      : e.payer || '',
+    '결제수단'    : e.pay_method || '',
+    '정산여부'    : e.settle === 'done' ? '완료' : '미정산',
+    '메모'        : e.memo || '',
+  }))), '개인실비');
+
+  /* ── 장비장부 시트 ── */
+  XLSX.utils.book_append_sheet(wb, makeSheet((DB.assets||[]).map(a => ({
+    '장비명'      : a.name,
+    '취득일'      : a.purchase_date || '',
+    '취득가'      : parseFloat(a.price)||0,
+    '보험여부'    : a.insured ? '✓' : '',
+    '메모'        : a.memo || '',
+  }))), '장비장부');
+
   XLSX.writeFile(wb, `SUPERXIZE_통합장부_${date}.xlsx`);
-  toast('엑셀 백업 완료! (열 너비 자동 조정됨)');
+  toast('엑셀 백업 완료! (12개 시트)');
 }
 
 function exportWithtaxExcel() {
@@ -6478,5 +6528,9 @@ function exportWithtaxExcel() {
   toast('다운로드 완료!');
 }
 </script>
+  <!-- Mobile FAB -->
+  <button id="mobile-fab" class="mobile-fab hidden" onclick="topbarAdd()" 
+    style="display:none;position:fixed;bottom:20px;right:20px;width:52px;height:52px;border-radius:50%;background:var(--green);color:#fff;font-size:22px;border:none;cursor:pointer;box-shadow:0 4px 16px rgba(0,200,150,.4);z-index:900;align-items:center;justify-content:center">+</button>
+
 </body>
 </html>
